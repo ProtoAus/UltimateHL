@@ -1,0 +1,318 @@
+ULTIMATEHL 3.7.1 - BIG AG HUD DISTRIBUTION
+=======================================
+A plain-English guide to what this is, how it works, and what was added.
+
+QUICK START
+-----------
+1. Extract the entire folder to a writable location. Keep its layout intact.
+2. Close other Half-Life copies. Have the required Steam/ownership setup ready.
+3. Run START HERE.bat, not Half-Life\hl.exe directly.
+4. Open "UltimateHL settings..." in the game menu to change preferences.
+
+The defaults are:
+- Big AG HUD artwork, at 1x HUD scale.
+- 2x scene rendering on EACH axis: four times the scene pixels.
+- Tankfird Bunnymod XT (BXT) enabled.
+- Desktop-size borderless window with the DXGI capture-compatible presenter.
+- NO automatic load FPS floor: uhl_load_fps_min 0.
+- Raw mouse input, focused cursor confinement and load mouse protection on.
+- Atlas-safe sprite sampling on; optional legacy MSAA off.
+
+Play - windowed control.bat is the ordinary 1280x800 window option, with BXT.
+There are no separate OBS, HUD-selector or quality BATs. Use the settings panel.
+
+This clean copy does NOT include the developer's saves, personal binds or run
+aliases. It starts with neutral WASD/mouse controls and sensitivity 3. Existing
+playtest folders, their saves/configs, and the original installation were not
+cleaned or overwritten. Copy your own binds/saves deliberately if wanted.
+
+
+WHAT EXACTLY WAS BUILT?
+-----------------------
+This is a compatibility/practice/rendering add-on around the supplied Windows
+Half-Life 2005 build 3248 (engine build Sep 15 2005), using valve_WON.
+
+It is NOT a new Half-Life engine, a port to a different engine, a recompilation
+of Valve's engine, or a source recreation of Half-Life. It is not universal to
+all WON/Steam releases. It expects the exact supported game files.
+
+The newly compiled pieces are:
+
+1. UltimateHL.exe
+   A 32-bit Windows C++ launcher. It chooses the correct mod, OpenGL renderer,
+   presentation mode and screen dimensions, starts the game/BXT injector, and
+   checks that the native add-on really initialized. It avoids injecting BXT
+   into an already running hl.exe. It is not the game engine.
+
+2. Half-Life\UHLCompat.dll
+   A 32-bit Windows C++ native adapter. This contains the input, cursor, load,
+   display, texture, HUD, settings and local practice-permission changes.
+   It was built with MSVC/Visual Studio 2022 in Release mode, using C++17.
+   Its C++ runtime is statically linked. You do not need a compiler or Python
+   to play this packaged copy; the original game's dependencies still apply.
+
+3. BXT\BunnymodXT.dll
+   Rebuilt from the Tankfird BXT fork's source (testing branch, commit edac2e5)
+   with UltimateHL additions: it loads UHLCompat.dll when the client loads,
+   cooperates with the enlarged HUD, and adds bxt_set_crosshair,
+   bxt_frametime_stats, bxt_precise_fps_limit and save backups. BXT is MIT
+   licensed (BXT\LICENSE); the Tankfird feature notes are in
+   BXT\Tankfird-features.txt.
+
+4. Supporting files
+   An early-DPI manifest, configuration defaults, a menu link, reversible HUD
+   artwork lists/assets, crosshair and font presets, two small launch scripts,
+   and this documentation. SHA256SUMS.txt records the packaged files for
+   integrity checking. It is not a digital signature or a guarantee of
+   speedrun/category approval.
+
+No game file is adapted. valve_WON\cl_dlls\client.dll, hl.exe, hw.dll, the
+server DLL and WON.cfg are the original files, byte for byte. UHLCompat.dll
+checks the client's SHA-256 and redirects nine of its exported callbacks in
+memory only, after BXT loads it. The original client code still builds normal
+movement commands, draws the stock HUD and processes normal game behavior.
+
+Separately bundled, NOT authored or recompiled as part of this adapter:
+- The Tankfird BXT injector (BXT\Injector.exe), unchanged.
+- The supplied Big AG HUD artwork.
+- The licensed Half-Life engine, GameDLL and game data.
+
+
+HOW DOES IT INTERACT WITH HALF-LIFE?
+------------------------------------
+The main path is:
+
+  START HERE.bat
+    -> UltimateHL.exe
+    -> BXT\Injector.exe starts hl.exe and injects BXT
+    -> Half-Life loads the original valve_WON client DLL
+    -> BXT loads UHLCompat.dll, which checks the client and redirects its
+       callbacks in memory before the engine looks them up
+    -> selected client callbacks pass through UHLCompat and call the original
+       client behavior, with narrowly scoped additions around those calls
+
+The adapted callbacks cover initialization, HUD initialization/frame/shutdown,
+mouse accumulation, movement-command creation, state clearing, key events and
+mouse button events. Windows WM_INPUT supplies relative mouse deltas. Only the
+client's gameplay mouse path is redirected: menu pointer coordinates are not
+replaced with raw-input coordinates.
+
+The adapter uses the game's engine API and validated in-process hooks to add
+console commands, observe loading, wrap rendering and maintain certain states.
+Some renderer calls/data operands, function/import slots and two local cheat
+permission caches are changed in the RUNNING PROCESS'S MEMORY. This is real
+runtime hooking, not just a config pack. It does not mean the engine is rebuilt.
+
+The supplied hl.exe, hw.dll, client DLL, server dlls\hl.dll and WON.cfg are
+kept byte-for-byte as in the supported baseline. Original ownership/Steam
+requirements are not bypassed. Because UHLCompat is loaded by BXT, it does not
+run without BXT.
+Save formats are not redesigned, and normal game simulation still runs in the
+original engine/GameDLL. Compatibility code and practice controls can still
+change timing or game behavior: this is NOT a claim of perfect neutrality.
+
+Engine/server/BXT fingerprints and expected instruction/pointer checks protect
+version-specific hooks. Optional unsupported paths fall back rather than guess
+addresses. Startup also verifies Windows mouse-settings protection; a failed
+startup check should be investigated, not bypassed by stacking another injector.
+
+BXT remains a separate in-process tool with its own hooks and practice features.
+When the HUD is enlarged, the two cooperate: BXT draws its timer and
+speedometer on the enlarged layer and everything else at 1x.
+
+
+HUMAN FEATURE LIST
+------------------
+
+DISPLAY AND MENUS
+- Desktop-size borderless fullscreen without switching the monitor's display
+  mode, plus the retained ordinary windowed launcher.
+- Early Windows DPI awareness, fixing the menu/UI mouse-click offset caused by
+  DPI coordinate virtualization.
+- A full-resolution windowed DXGI presentation path for the working OBS Display
+  Capture behavior. It moves the OpenGL image via GPU NV/D3D11 interop, not a
+  per-frame CPU screenshot. No OBS profiles or global GPU settings are edited.
+- Native fallback if that GPU interop is unsupported. This is not a guarantee
+  of the DXGI path on every AMD/Intel/driver combination.
+- A graphics error left behind by the game (for example during a level
+  change) no longer switches the capture path off, and a failed frame is
+  retried before falling back to legacy OpenGL.
+- An "UltimateHL settings..." entry in the game menu and a native settings
+  window. There are no dedicated 4 FPS / 100 FPS buttons in that window.
+
+MOUSE AND WINDOWS PREFERENCES
+- Relative raw mouse input for gameplay, independent of Windows pointer speed
+  and pointer acceleration. The stock game sensitivity still applies.
+- Fractional mouse filtering and sensitivity scaling retain slow movement even
+  at sensitivity 0.1, instead of rounding it away. The stock look/strafe, pitch
+  limits and zoom-sensitivity behavior remain. uhl_status reports validation.
+- The old client's attempts to change Windows Enhanced Pointer Precision,
+  acceleration or pointer speed are blocked, including its exit-time restore.
+  Existing Windows settings are left alone, rather than forcibly turned off.
+- Cursor confinement during focused gameplay, including very low-FPS play, so
+  it is harder to accidentally click another monitor/window.
+- Cursor release for Alt-Tab, lost focus, the console and the settings panel.
+  Clicking back into the game with the console open no longer turns the view.
+- Optional load-time mouse X/Y discard/pinning, avoiding a queued mouse-delta
+  jump after a load. This does not overwrite the save's camera orientation.
+- Ctrl+C copies the selected console text (as right-click Copy does).
+- Do not stack RInput or another raw-input injector over this adapter.
+
+SAVES, LOADS, CHANGELEVELS AND FPS
+- Load-specific repair of held stock +/- button ownership, addressing movement
+  keys being dropped across save-loads and map transitions. It does not replay
+  an entire saved input stream or synthesize klook/mlook.
+- Shared loading-lifecycle handling for save-loads and trigger changelevels.
+- Suppression of the unwanted automatic in-game load menu by default. Opening
+  the menu intentionally remains possible; the setting can restore stock behavior.
+- uhl_fps bindings for choosing gameplay FPS, including input handling around
+  low-FPS/load/menu situations.
+- An optional load FPS floor. It defaults to ZERO for glitch-sensitive routes;
+  the adapter does not silently force every load to 100 FPS. Opt into 100 in
+  settings only if wanted. Your other game/BXT FPS limits still matter.
+- Optional precision frame timer (settings, or bxt_precise_fps_limit 1): targets
+  fps_max deadlines more closely instead of waking a few milliseconds late.
+  Windows scheduling can still introduce jitter; exact starts are not guaranteed.
+  bxt_frametime_stats measures the real frame times.
+- Save backups as in the original 1998 game: saving over a save keeps the
+  previous one as name01 (quick -> quick01).
+
+WORLD RENDERING AND HUD
+- Native-size texture upload and safe mip handling instead of unwanted legacy
+  power-of-two texture resizes, with validation and native fallback.
+- Corrected sprite texel centers/atlas guards, reducing the stray lines from
+  sampling above or below neighboring HUD sprites.
+- Optional scene-only supersampling. The default 2x means 3840x2400 scene pixels
+  resolved to 1920x1200 on a 1920x1200 output. It is more GPU-intensive.
+- Big AG HUD as the default art. Original 640 and Compact 320 remain selectable;
+  the source sprite bitmaps are not resampled to manufacture these choices.
+- Separate HUD scale options: 1x, 1.25x, 1.5x, 1.75x and 2x. These do not change
+  scene quality or game-menu mouse coordinates. HUD scale changes apply live.
+- Brightness for the 3D view (settings slider or uhl_brightness): a curve that
+  keeps black and white fixed, applied to the finished picture. It does not
+  rebuild lightmaps like the old gamma/brightness cvars. Those are held at the
+  engine defaults by default (uhl_gamma_lock 1); while locked, the brightness
+  command and menu slider set the new brightness instead.
+- At enlarged scales only health, armor, ammo and BXT's timer and speedometer
+  grow. They are drawn on their own transparent canvas and smoothly enlarged
+  (premultiplied bilinear filtering; additive sprite backgrounds stay clear).
+  All text ("Saved...", chapter titles, credits), the crosshair and everything
+  else are drawn natively at 1x.
+- Smooth engine text: the engine's own font (EngineFont) is antialiased by
+  default. "Smooth engine text" in the settings panel switches back (restart).
+- Restart after changing ARTWORK, because the game/BXT cache sprite assets.
+  All three art presets remain in the package for reversibility.
+- UltimateHL crosshairs are the default. "Crosshairs" in the settings panel
+  switches back to the original Half-Life set (restart required). A crosshair
+  sheet installed by hand shows as "Custom" and is left alone.
+- Weapons without a crosshair of their own (crowbar, hand grenade, satchel,
+  snark and tripmine) show the first crosshair slot (a small centre mark)
+  with every art preset.
+
+LOCAL SINGLE-PLAYER PRACTICE
+- sv_cheats 1 takes effect in the current local single-player map without
+  requiring a new map for the supported cached permissions.
+- BOTH the engine's permission flag (god/noclip) and the GameDLL's separate
+  impulse permission cache are synchronized. The latter fixed impulse 101.
+- Cheats are never automatically enabled. This is restricted to an active,
+  validated local one-player server with deathmatch/coop off; it is not a way
+  to gain authority on remote/multiplayer servers.
+- sv_cheats 0 closes the permission gates, but does not confiscate weapons or
+  automatically undo god/noclip effects already enabled. Turn those off first.
+- uhl_cheats_live 0 opts out of this synchronization. Use a fresh map when
+  comparing clean stock permission behavior.
+
+TANKFIRD BXT FEATURES INCLUDED WITH THE SUPPLIED FORK
+- Entity display range controls and entity angular-velocity display.
+- Stuck groundentity selection for practice.
+- Rotation-trace position/angle/angular-velocity/frametime setup and execution.
+- Rotation-trace wireframe and debugging/HUD display.
+- Physent lists and nearby entity box displays.
+- Existing BXT utilities remain available; new practice modes are not
+  automatically switched on by this package.
+- Some server-side controls register only after a map has started. The checks
+  established that the listed controls are available, not that every physics
+  effect has been tested in every speedrun route.
+
+Examples (query/use after a map has started):
+  bxt_hud_entities_min / bxt_hud_entities_max / bxt_hud_entities_avel
+  bxt_ch_set_groundentity                 (this is a cvar)
+  bxt_ch_rot_pos / bxt_ch_rot_ang / bxt_ch_rot_avel / bxt_ch_rot_ft
+  bxt_ch_rot_ent / bxt_ch_rot_trace
+  bxt_show_rotate_trace / bxt_hud_rotate_trace / bxt_hud_physents
+
+SETTINGS AND TROUBLESHOOTING
+- Numeric preferences saved locally to valve_WON\uhl_preferences.cfg.
+- uhl_settings opens the panel; uhl_settings_save saves whitelisted console
+  preferences. Artwork is selected by its installed sprite list files.
+- uhl_status shows which paths validated and are active, rather than assuming
+  that a requested feature necessarily loaded successfully.
+- Opt-in reports, input traces, a render self-test and a game-only framebuffer
+  capture remain available for troubleshooting. They are not running by default.
+  Tracing can affect timings; do not benchmark/submit runs with tracing enabled.
+
+
+USEFUL CONSOLE COMMANDS
+-----------------------
+uhl_settings                 Open the settings panel
+uhl_status                   Show feature/validation status
+uhl_help                     List adapter help
+uhl_hud_scale 1               Native HUD size (default)
+uhl_hud_scale 1.25/1.5/1.75   Smooth enlarged HUD
+uhl_hud_scale 2               Smooth 2x HUD
+uhl_brightness 0.5            Brighter 3D view (0 = off, -0.9..3)
+uhl_gamma_lock 0              Allow the old lightmap gamma/brightness cvars
+uhl_render_scale 1            Native scene resolution
+uhl_render_scale 2            2x-per-axis scene (default)
+uhl_load_fps_min 0            No adapter-imposed load FPS floor (default)
+uhl_load_fps_min 100          Opt-in 100 FPS load floor
+uhl_fps 4                    Choose 4 FPS via adapter command
+uhl_fps 100                  Choose 100 FPS via adapter command
+uhl_settings_save            Save supported numeric preferences
+
+For a local single-player weapon practice test:
+  sv_cheats 1
+  impulse 101
+The command is sv_cheats, not sc_cheats. It was tested starting with cheats off,
+then enabling them in the SAME map, and verifying the granted weapons/suit.
+
+
+WHAT WAS CLEANED FROM THIS DISTRIBUTION?
+----------------------------------------
+- Old screenshots/framebuffer BMPs, diagnostics, input traces and console logs.
+- Test scripts/reports, development build files and adapter updater backups.
+- Old DLL backup copies (not the actual runtime DLLs).
+- Personal saves, generated configs, run aliases and platform user state.
+- Unused dedicated-server/HLTV executables and Linux-only server libraries.
+- Internal HUD preset manifests containing developer machine paths.
+
+Game maps, textures, models, sounds, fonts, required runtime/GUI libraries,
+original notices, BXT's license and all three selectable HUD presets remain.
+This is deliberately a conservative cleanup, not a risky minimum-size game rip.
+The game can create fresh settings, saves and logs while playing; that is normal.
+Python tools, source, test reports and older copies remain outside this package.
+
+
+LIMITS, TESTING AND DISTRIBUTION RIGHTS
+--------------------------------------
+This is an experimental LOCAL/OFFLINE build, not run/category certified. Do not
+use it on VAC. No claim is made that all first-resume/gauss edge cases, aliases,
+custom HUDs, resolutions, drivers or BXT practice behaviors are perfectly fixed.
+Input/rendering/practice changes may need category approval. Save-backup rotation
+and general arbitrary continuous HUD scaling were not added.
+
+Validation includes native input/load/cheat policy and real-GPU tests, Python
+patching/preset/packaging tests, an adapter-loader/mouse-settings guard test,
+owned-game settings checks and actual save-load/HUD/impulse practice tests.
+These checks are evidence, not certification. Development reports are retained
+in the source workspace rather than shipped as runtime clutter.
+
+Valve's engine/game files are still Valve's licensed material. BXT retains its
+own license and the AG art retains its authors' rights; this guide does not
+relicense either. Making a clean ZIP does not grant rights to publicly
+redistribute a standalone Half-Life game. For public sharing, use an add-on-only
+installer/package and require recipients to supply their own supported licensed
+base game, subject to the relevant licenses and asset permissions. Distributing
+BXT binaries requires preserving its and its dependencies' applicable notices.
+The public add-on includes those notices, the exact upstream source revision
+and the complete UltimateHL integration patch in third_party.

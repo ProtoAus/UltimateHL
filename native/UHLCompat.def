@@ -1,0 +1,13 @@
+LIBRARY UHLCompat
+EXPORTS
+    UHL_Initialize
+    UHL_Accumulate
+    UHL_CreateMove
+    UHL_Frame
+    UHL_Shutdown
+    UHL_ClearStates
+    UHL_KeyEvent
+    UHL_MouseEvent
+    UHL_HudInit
+    UHL_AttachClient
+    UHL_HudScalePass

@@ -1,0 +1,4 @@
+* text=auto
+# Preserve the exact upstream integration patch, including its context lines.
+*.patch -text
+third_party/* -whitespace

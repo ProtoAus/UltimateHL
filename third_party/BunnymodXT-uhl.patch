@@ -1,0 +1,544 @@
+diff --git a/BunnymodXT/cvars.hpp b/BunnymodXT/cvars.hpp
+index 7631306..e72d155 100644
+--- a/BunnymodXT/cvars.hpp
++++ b/BunnymodXT/cvars.hpp
+@@ -62,6 +62,7 @@
+ 	X(bxt_hud_game_color, "") \
+ 	X(bxt_disable_gamedir_check_in_demo, "0") \
+ 	X(bxt_remove_fps_limit, "0") \
++	X(bxt_precise_fps_limit, "0") \
+ 	X(bxt_cof_disable_save_lock, "0") \
+ 	X(bxt_remove_viewmodel, "0") \
+ 	X(bxt_disable_world, "0") \
+diff --git a/BunnymodXT/hud_custom.cpp b/BunnymodXT/hud_custom.cpp
+index 60189ee..5756b4f 100644
+--- a/BunnymodXT/hud_custom.cpp
++++ b/BunnymodXT/hud_custom.cpp
+@@ -119,6 +119,20 @@ namespace CustomHud
+ 		ClientDLL::GetInstance().pEngfuncs->pfnGetScreenInfo(&si);
+ 	}
+ 
++	// UltimateHL's split HUD scale: 1 = enlarged pass, 2 = 1x pass, 0 = not split.
++	static int HudScalePass()
++	{
++#ifdef _WIN32
++		static int (__cdecl *pass)() = nullptr;
++		if (!pass)
++			if (auto uhl = GetModuleHandleW(L"UHLCompat.dll"))
++				pass = reinterpret_cast<int (__cdecl *)()>(GetProcAddress(uhl, "UHL_HudScalePass"));
++		return pass ? pass() : 0;
++#else
++		return 0;
++#endif
++	}
++
+ 	static int DrawString(int x, int y, const char* s, float r, float g, float b)
+ 	{
+ 		ClientDLL::GetInstance().pEngfuncs->pfnDrawSetTextColor(r, g, b);
+@@ -1951,38 +1965,56 @@ namespace CustomHud
+ 		if (!CVars::bxt_hud.GetBool())
+ 			return;
+ 
++		// A scaled HUD canvas (UltimateHL) reports its own size while the HUD is drawn.
++		// Use it for this draw only; world overlays keep the VidInit screen size.
++		struct RestoreScreenInfo { SCREENINFO saved; ~RestoreScreenInfo() { si = saved; } } restore{si};
++		UpdateScreenInfo();
++
+ 		UpdatePrecision();
+ 		UpdateColors();
+ 		GetAccurateInfo();
+ 
+-		DrawQuickGauss(flTime);
+-		DrawCheckpoint(flTime);
+-		DrawHealth(flTime);
+-		DrawArmor(flTime);
+-		DrawWaterlevel(flTime);
+-		DrawVelocity(flTime);
+-		DrawOrigin(flTime);
+-		DrawViewangles(flTime);
+-		DrawSpeedometer(flTime);
+-		DrawJumpspeed(flTime);
+-		DrawJumpDistance(flTime);
+-		DrawTimer(flTime);
+-		DrawDistance(flTime);
+-		DrawEntityInfo(flTime);
+-		DrawSelfgaussInfo(flTime);
+-		DrawVisibleLandmarks(flTime);
+-		DrawNihilanthInfo(flTime);
+-		DrawGonarchInfo(flTime);
+-		DrawRotateTrace(flTime);
+-		DrawIncorrectFPSIndicator(flTime);
+-		DrawCollisionDepthMap(flTime);
+-		DrawTASEditorStatus();
+-		DrawEntities(flTime);
+-		DrawPhysEnts(flTime);
+-		DrawAVelEntities(flTime);
+-		DrawCrosshair(flTime);
+-		DrawStamina(flTime);
+-		DrawSplit(flTime);
++		// UltimateHL's split HUD scale draws the HUD twice: the enlarged pass shows only the
++		// scaled elements (here the speedometer and timer), the 1x pass everything else.
++		const int pass = HudScalePass();
++		const auto show = [pass](bool enlarged) { return pass == 0 || (pass == 1) == enlarged; };
++
++		if (show(false)) {
++			DrawQuickGauss(flTime);
++			DrawCheckpoint(flTime);
++			DrawHealth(flTime);
++			DrawArmor(flTime);
++			DrawWaterlevel(flTime);
++			DrawVelocity(flTime);
++			DrawOrigin(flTime);
++			DrawViewangles(flTime);
++		}
++		if (show(true))
++			DrawSpeedometer(flTime);
++		if (show(false)) {
++			DrawJumpspeed(flTime);
++			DrawJumpDistance(flTime);
++		}
++		if (show(true))
++			DrawTimer(flTime);
++		if (show(false)) {
++			DrawDistance(flTime);
++			DrawEntityInfo(flTime);
++			DrawSelfgaussInfo(flTime);
++			DrawVisibleLandmarks(flTime);
++			DrawNihilanthInfo(flTime);
++			DrawGonarchInfo(flTime);
++			DrawRotateTrace(flTime);
++			DrawIncorrectFPSIndicator(flTime);
++			DrawCollisionDepthMap(flTime);
++			DrawTASEditorStatus();
++			DrawEntities(flTime);
++			DrawPhysEnts(flTime);
++			DrawAVelEntities(flTime);
++			DrawCrosshair(flTime);
++			DrawStamina(flTime);
++			DrawSplit(flTime);
++		}
+ 
+ 		receivedAccurateInfo = false;
+ 		frame_bulk_selected = false;
+@@ -2175,3 +2207,12 @@ namespace CustomHud
+ 		frame_bulk_status.frametime = frame_bulk.Frametime;
+ 	}
+ }
++
++#ifdef _WIN32
++// Tells UltimateHL's scaled HUD canvas that this BXT takes the screen size per HUD draw
++// (version 1) and sorts its HUD by UHL_HudScalePass (version 2), see CustomHud::Draw.
++extern "C" __declspec(dllexport) int BXT_HudCanvasVersion()
++{
++	return 2;
++}
++#endif
+diff --git a/BunnymodXT/modules/ClientDLL.cpp b/BunnymodXT/modules/ClientDLL.cpp
+index 0de1dab..bda50f9 100644
+--- a/BunnymodXT/modules/ClientDLL.cpp
++++ b/BunnymodXT/modules/ClientDLL.cpp
+@@ -149,6 +149,26 @@ extern "C" void __cdecl _Z11V_PunchAxisif(int axis, float punch)
+ }
+ #endif
+ 
++#ifdef _WIN32
++// UltimateHL's adapter (UHLCompat.dll next to hl.exe) adapts a stock client.dll in memory, so
++// the client stays unmodified on disk. It has to run before the client's exports are looked
++// up, here and by the engine; a client patched on disk loads the adapter itself and is skipped.
++static void AttachUltimateHL(void* client)
++{
++	wchar_t path[MAX_PATH]{};
++	const auto length = GetModuleFileNameW(nullptr, path, MAX_PATH);
++	auto slash = wcsrchr(path, L'\\');
++	if (!length || length >= MAX_PATH || !slash || wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"UHLCompat.dll"))
++		return;
++	if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
++		return;
++	auto uhl = LoadLibraryW(path);
++	auto attach = uhl ? reinterpret_cast<int (__cdecl *)(HMODULE)>(GetProcAddress(uhl, "UHL_AttachClient")) : nullptr;
++	if (attach && attach(static_cast<HMODULE>(client)))
++		EngineDevMsg("[client dll] UltimateHL adapter attached to the unmodified client.\n");
++}
++#endif
++
+ void ClientDLL::Hook(const std::wstring& moduleName, void* moduleHandle, void* moduleBase, size_t moduleLength, bool needToIntercept)
+ {
+ 	Clear(); // Just in case.
+@@ -159,6 +179,9 @@ void ClientDLL::Hook(const std::wstring& moduleName, void* moduleHandle, void* m
+ 	m_Name = moduleName;
+ 	m_Intercepted = needToIntercept;
+ 
++#ifdef _WIN32
++	AttachUltimateHL(moduleHandle);
++#endif
+ 	FindStuff();
+ 	RegisterCVarsAndCommands();
+ 
+diff --git a/BunnymodXT/modules/HwDLL.cpp b/BunnymodXT/modules/HwDLL.cpp
+index 4ca2d7e..255d7a8 100644
+--- a/BunnymodXT/modules/HwDLL.cpp
++++ b/BunnymodXT/modules/HwDLL.cpp
+@@ -3,6 +3,7 @@
+ #include <boost/algorithm/string/replace.hpp>
+ #include <boost/algorithm/string/predicate.hpp>
+ #include <cerrno>
++#include <filesystem>
+ #include <GL/gl.h>
+ #include "../sptlib-wrapper.hpp"
+ #include <SPTLib/MemUtils.hpp>
+@@ -575,8 +576,25 @@ void HwDLL::Hook(const std::wstring& moduleName, void* moduleHandle, void* modul
+ 	#endif
+ }
+ 
++// The engine's command list lives on its heap, which may be gone when the process exits.
++static bool StillWritable(const void *address)
++{
++#ifdef _WIN32
++	MEMORY_BASIC_INFORMATION info{};
++	return VirtualQuery(address, &info, sizeof(info)) && info.State == MEM_COMMIT && !(info.Protect & PAGE_GUARD)
++		&& (info.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
++#else
++	return address != nullptr;
++#endif
++}
++
+ void HwDLL::Unhook()
+ {
++	if (saveCommand && StillWritable(saveCommand) && saveCommand->function == SaveWithBackup)
++		saveCommand->function = ORIG_SaveCommand;
++	saveCommand = nullptr;
++	ORIG_SaveCommand = nullptr;
++
+ 	if (m_Intercepted)
+ 	{
+ 		MemUtils::RemoveInterception(m_Name,
+@@ -3881,6 +3899,134 @@ struct HwDLL::Cmd_BXT_Camera_Clear
+ 	}
+ };
+ 
++// Shows a crosshair without holding a weapon that has it, through the same engine call
++// the client uses. It stays until a weapon sets its own, e.g. across a map change.
++// With no argument it shows slot 1 of crosshairs.spr (its top-left 24x24 cell), the
++// crosshair UltimateHL gives weapons that have none of their own.
++struct HwDLL::Cmd_BXT_Set_Crosshair
++{
++	USAGE("Usage: bxt_set_crosshair [weapon | off]\n No weapon: slot 1 of crosshairs.spr. Example: bxt_set_crosshair glock\n");
++
++	static void handler()
++	{
++		auto pEngfuncs = ClientDLL::GetInstance().pEngfuncs;
++		if (!pEngfuncs) {
++			HwDLL::GetInstance().ORIG_Con_Printf("bxt_set_crosshair: the client is not loaded yet.\n");
++			return;
++		}
++		pEngfuncs->pfnSetCrosshair(pEngfuncs->pfnSPR_Load("sprites/crosshairs.spr"), wrect_t{0, 24, 0, 24}, 255, 255, 255);
++	}
++
++	static void handler(const char *weapon)
++	{
++		auto &hw = HwDLL::GetInstance();
++		auto pEngfuncs = ClientDLL::GetInstance().pEngfuncs;
++		if (!pEngfuncs) {
++			hw.ORIG_Con_Printf("bxt_set_crosshair: the client is not loaded yet.\n");
++			return;
++		}
++
++		std::string name(weapon);
++		if (name == "off" || name == "0") {
++			pEngfuncs->pfnSetCrosshair(0, wrect_t{}, 0, 0, 0);
++			return;
++		}
++		if (name == "glock")
++			name = "9mmhandgun";
++		if (name.compare(0, 7, "weapon_") == 0)
++			name.erase(0, 7);
++		if (name.empty() || !std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '_'; })) {
++			hw.ORIG_Con_Printf("bxt_set_crosshair: invalid weapon name \"%s\".\n", weapon);
++			return;
++		}
++		Show(pEngfuncs, name);
++	}
++
++private:
++	// Shows the crosshair sprites/weapon_<name>.txt has for the current resolution, if any.
++	static void Show(cl_enginefunc_t *pEngfuncs, const std::string &name)
++	{
++		SCREENINFO si{};
++		si.iSize = sizeof(si);
++		pEngfuncs->pfnGetScreenInfo(&si);
++		const int res = (si.iWidth < 640) ? 320 : 640; // Same rule as the client's HUD.
++
++		// The engine allocates sprite lists and never frees them (the client keeps its own forever), so load each once.
++		static std::unordered_map<std::string, std::pair<client_sprite_t *, int>> lists;
++		auto it = lists.find(name);
++		if (it == lists.end()) {
++			const std::string path = "sprites/weapon_" + name + ".txt";
++			int count = 0;
++			auto list = pEngfuncs->pfnSPR_GetList(const_cast<char *>(path.c_str()), &count);
++			it = lists.emplace(name, std::make_pair(list, list ? count : 0)).first;
++		}
++
++		const auto [list, count] = it->second;
++		for (auto p = list; p && p < list + count; ++p) {
++			if (p->iRes == res && !std::strcmp(p->szName, "crosshair")) {
++				const std::string sprite = std::string("sprites/") + p->szSprite + ".spr";
++				pEngfuncs->pfnSetCrosshair(pEngfuncs->pfnSPR_Load(sprite.c_str()), p->rc, 255, 255, 255);
++				return;
++			}
++		}
++		HwDLL::GetInstance().ORIG_Con_Printf("bxt_set_crosshair: sprites/weapon_%s.txt has no %d crosshair.\n", name.c_str(), res);
++	}
++};
++
++// bxt_frametime_stats: what the engine's frame limiter actually produces. Read-only.
++static std::vector<double> frametimeSamples;
++static size_t frametimeSamplesWanted = 0;
++
++static void RecordFrametime(double frametime)
++{
++	if (!frametimeSamplesWanted)
++		return;
++	frametimeSamples.push_back(frametime);
++	if (frametimeSamples.size() < frametimeSamplesWanted)
++		return;
++	frametimeSamplesWanted = 0;
++
++	double sum = 0, shortest = frametimeSamples[0], longest = frametimeSamples[0];
++	std::vector<unsigned> byWholeMs;
++	for (const double t : frametimeSamples) {
++		sum += t;
++		shortest = std::min(shortest, t);
++		longest = std::max(longest, t);
++		const auto ms = static_cast<size_t>(std::max(0.0, std::floor(t * 1000.0)));
++		if (ms >= byWholeMs.size())
++			byWholeMs.resize(ms + 1);
++		++byWholeMs[ms];
++	}
++	const double average = sum / frametimeSamples.size();
++	const float fpsMax = CVars::fps_max.GetFloat();
++	auto &hw = HwDLL::GetInstance();
++	hw.ORIG_Con_Printf("bxt_frametime_stats: %u frames at fps_max %g (target %.3f ms): average %.3f ms (%.2f fps), shortest %.3f ms, longest %.3f ms.\n",
++		static_cast<unsigned>(frametimeSamples.size()), fpsMax, fpsMax > 0 ? 1000.0 / fpsMax : 0.0,
++		average * 1000.0, average > 0 ? 1.0 / average : 0.0, shortest * 1000.0, longest * 1000.0);
++	std::string line = " Frames by whole milliseconds:";
++	for (size_t ms = 0; ms < byWholeMs.size(); ++ms)
++		if (byWholeMs[ms])
++			line += " " + std::to_string(ms) + " ms x" + std::to_string(byWholeMs[ms]);
++	hw.ORIG_Con_Printf("%s\n", line.c_str());
++}
++
++struct HwDLL::Cmd_BXT_Frametime_Stats
++{
++	USAGE("Usage: bxt_frametime_stats [frames]\n Measures the next frames (default 500) and prints their real frame times.\n");
++
++	static void handler()
++	{
++		handler(500);
++	}
++
++	static void handler(int frames)
++	{
++		frametimeSamples.clear();
++		frametimeSamplesWanted = static_cast<size_t>(std::clamp(frames, 10, 100000));
++		HwDLL::GetInstance().ORIG_Con_Printf("bxt_frametime_stats: measuring the next %u frames...\n", static_cast<unsigned>(frametimeSamplesWanted));
++	}
++};
++
+ struct HwDLL::Cmd_BXT_Camera_Offset
+ {
+ 	USAGE("Usage: bxt_cam_offset <x> <y> <z> <pitch> <yaw> <roll>\n");
+@@ -5895,6 +6041,7 @@ void HwDLL::RegisterCVarsAndCommandsIfNeeded()
+ 	RegisterCVar(CVars::bxt_force_clear);
+ 	RegisterCVar(CVars::bxt_disable_gamedir_check_in_demo);
+ 	RegisterCVar(CVars::bxt_remove_fps_limit);
++	RegisterCVar(CVars::bxt_precise_fps_limit);
+ 	RegisterCVar(CVars::bxt_disable_world);
+ 	RegisterCVar(CVars::bxt_disable_particles);
+ 	RegisterCVar(CVars::bxt_fix_changelevel_in_coop);
+@@ -5990,6 +6137,8 @@ void HwDLL::RegisterCVarsAndCommandsIfNeeded()
+ 	wrapper::Add<Cmd_BXT_Camera_Fixed, Handler<float, float, float, float, float, float>>("bxt_cam_fixed");
+ 	wrapper::Add<Cmd_BXT_Camera_Offset, Handler<float, float, float, float, float, float>>("bxt_cam_offset");
+ 	wrapper::Add<Cmd_BXT_Camera_Clear, Handler<>>("bxt_cam_clear");
++	wrapper::Add<Cmd_BXT_Set_Crosshair, Handler<>, Handler<const char *>>("bxt_set_crosshair");
++	wrapper::Add<Cmd_BXT_Frametime_Stats, Handler<>, Handler<int>>("bxt_frametime_stats");
+ 	wrapper::Add<Cmd_BXT_Timer_Start, Handler<>>("bxt_timer_start");
+ 	wrapper::Add<Cmd_BXT_Timer_Stop, Handler<>>("bxt_timer_stop");
+ 	wrapper::Add<Cmd_BXT_Timer_Reset, Handler<>>("bxt_timer_reset");
+@@ -7097,6 +7246,7 @@ const char* HwDLL::GetMovetypeName(int moveType)
+ HOOK_DEF_0(HwDLL, void, __cdecl, Cbuf_Execute)
+ {
+ 	RegisterCVarsAndCommandsIfNeeded();
++	HookSaveCommandIfNeeded();
+ 
+ 	UpdateCustomTriggersAndSplits();
+ 
+@@ -7681,6 +7831,50 @@ HOOK_DEF_0(HwDLL, void, __cdecl, SCR_BeginLoadingPlaque)
+ 	return ORIG_SCR_BeginLoadingPlaque();
+ }
+ 
++// bxt_precise_fps_limit: the engine only checks its frame limit when its loop comes
++// round, so a frame can start late (measured on 3248: up to 1 ms at fps_max 100 and
++// 2.6 ms at 20) and the late time is simulated. In the last few milliseconds before the
++// deadline, wait for it here on a high-resolution clock instead. The waited time is
++// handed to the engine now and taken back from the next call, whose measurement of real
++// time includes it again, so the game never runs faster than real time or fps_max.
++template<typename Filter>
++static int PreciseFilterTime(Filter filter, float passedTime, bool enabled)
++{
++	constexpr double window = 0.004;
++	static double sinceFrame = 0.0, debt = 0.0;
++	const float fpsMax = CVars::fps_max.GetFloat();
++	if (!enabled || fpsMax <= 0.0f) {
++		sinceFrame = debt = 0.0;
++		return filter(passedTime);
++	}
++
++	const double repaid = std::min(static_cast<double>(passedTime), debt);
++	debt -= repaid;
++	const auto passed = static_cast<float>(passedTime - repaid);
++	if (filter(passed)) {
++		sinceFrame = 0.0;
++		return 1;
++	}
++	sinceFrame += passed;
++
++	const double remaining = 1.0 / fpsMax - sinceFrame;
++	if (remaining <= 0.0 || remaining > window)
++		return 0;
++	const auto start = std::chrono::steady_clock::now();
++	const auto deadline = start + std::chrono::duration<double>(remaining + 1e-6); // past float rounding
++	auto now = start;
++	while (now < deadline)
++		now = std::chrono::steady_clock::now();
++	const double waited = std::chrono::duration<double>(now - start).count();
++	debt += waited;
++	if (filter(static_cast<float>(waited))) {
++		sinceFrame = 0.0;
++		return 1;
++	}
++	sinceFrame += waited;
++	return 0;
++}
++
+ HOOK_DEF_1(HwDLL, int, __cdecl, Host_FilterTime, float, passedTime)
+ {
+ 	static double timeCounter = 0.0;
+@@ -7726,7 +7920,11 @@ HOOK_DEF_1(HwDLL, int, __cdecl, Host_FilterTime, float, passedTime)
+ 	if (minFrametime == 0.0f || CVars::_bxt_norefresh.GetBool()) {
+ 		timeCounter = 0.0;
+ 		usePassedTime = false;
+-		return ORIG_Host_FilterTime(passedTime);
++		const bool precise = CVars::bxt_precise_fps_limit.GetBool() && !CVars::_bxt_norefresh.GetBool() && !runningFrames;
++		const int ran = PreciseFilterTime(ORIG_Host_FilterTime, passedTime, precise);
++		if (ran && host_frametime)
++			RecordFrametime(*host_frametime);
++		return ran;
+ 	}
+ 
+ 	timeCounter += passedTime;
+@@ -7736,6 +7934,8 @@ HOOK_DEF_1(HwDLL, int, __cdecl, Host_FilterTime, float, passedTime)
+ 	if (ORIG_Host_FilterTime(usePassedTime ? passedTime : static_cast<float>(timeCounter))) {
+ 		usePassedTime = false;
+ 		timeCounter = std::fmod(timeCounter, minFrametime);
++		if (host_frametime)
++			RecordFrametime(*host_frametime);
+ 		return 1;
+ 	} else {
+ 		usePassedTime = true;
+@@ -8426,6 +8626,72 @@ HOOK_DEF_0(HwDLL, int, __cdecl, Host_ValidSave)
+ 	return ORIG_Host_ValidSave();
+ }
+ 
++// Save backups like the original 1998 engine: saving over "name" keeps the previous save
++// as "name01". The engine's save command is wrapped because SaveGameSlot is not found on
++// every build (e.g. 3248); the copy is only kept if the save really replaced the file.
++void HwDLL::HookSaveCommandIfNeeded()
++{
++	if (saveCommand || !ORIG_Cmd_FindCmd)
++		return;
++	auto cmd = ORIG_Cmd_FindCmd("save");
++	if (!cmd || !cmd->function)
++		return;
++	saveCommand = cmd;
++	ORIG_SaveCommand = cmd->function;
++	cmd->function = SaveWithBackup;
++}
++
++void HwDLL::SaveWithBackup()
++{
++	namespace fs = std::filesystem;
++	auto &hw = HwDLL::GetInstance();
++	auto pEngfuncs = ClientDLL::GetInstance().pEngfuncs;
++	const char *gameDir = pEngfuncs ? pEngfuncs->pfnGetGameDirectory() : nullptr;
++	const std::string name = hw.ORIG_Cmd_Argc() >= 2 ? hw.ORIG_Cmd_Argv(1) : ""; // the save reuses Argv
++	std::error_code error;
++	fs::path save, copy;
++	fs::file_time_type before{};
++	std::uintmax_t beforeSize = 0;
++	bool copied = false;
++
++	if (!name.empty() && name.find_first_of("/\\:") == std::string::npos && name.find("..") == std::string::npos
++		&& gameDir && gameDir[0]) {
++		fs::path folder(gameDir);
++		if (folder.is_relative()) {
++#ifdef _WIN32
++			wchar_t exe[MAX_PATH]{};
++			GetModuleFileNameW(nullptr, exe, MAX_PATH);
++			folder = fs::path(exe).parent_path() / folder;
++#else
++			folder = fs::current_path(error) / folder;
++#endif
++		}
++		save = folder / "SAVE" / (name + ".sav");
++		copy = folder / "SAVE" / (name + "01.sav.tmp");
++		if (fs::is_regular_file(save, error)) {
++			before = fs::last_write_time(save, error);
++			beforeSize = fs::file_size(save, error);
++			copied = fs::copy_file(save, copy, fs::copy_options::overwrite_existing, error);
++		}
++	}
++
++	hw.ORIG_SaveCommand();
++
++	if (!copied)
++		return;
++	const bool replaced = fs::last_write_time(save, error) != before || fs::file_size(save, error) != beforeSize;
++	if (replaced) {
++		const auto previous = copy.parent_path() / (name + "01.sav");
++		fs::remove(previous, error);
++		fs::rename(copy, previous, error);
++		if (!error) {
++			hw.ORIG_Con_Printf("Previous save kept as %s01.\n", name.c_str());
++			return;
++		}
++	}
++	fs::remove(copy, error);
++}
++
+ HOOK_DEF_2(HwDLL, int, __cdecl, SaveGameSlot, const char*, pSaveName, const char*, pSaveComment)
+ {
+ 	auto rv = ORIG_SaveGameSlot(pSaveName, pSaveComment);
+diff --git a/BunnymodXT/modules/HwDLL.hpp b/BunnymodXT/modules/HwDLL.hpp
+index b772bfb..90346f4 100644
+--- a/BunnymodXT/modules/HwDLL.hpp
++++ b/BunnymodXT/modules/HwDLL.hpp
+@@ -455,6 +455,8 @@ protected:
+ 	struct Cmd_Multiwait;
+ 	struct Cmd_BXT_Camera_Fixed;
+ 	struct Cmd_BXT_Camera_Clear;
++	struct Cmd_BXT_Set_Crosshair;
++	struct Cmd_BXT_Frametime_Stats;
+ 	struct Cmd_BXT_Camera_Offset;
+ 	struct Cmd_BXT_Timer_Start;
+ 	struct Cmd_BXT_Timer_Stop;
+@@ -547,6 +549,10 @@ protected:
+ 	struct Cmd_BXT_CH_CheckPoint_Current;
+ 
+ 	void RegisterCVarsAndCommandsIfNeeded();
++	void HookSaveCommandIfNeeded();
++	static void SaveWithBackup();
++	cmd_function_t *saveCommand = nullptr;
++	xcommand_t ORIG_SaveCommand = nullptr;
+ 	void InsertCommands();
+ 	bool GetNextMovementFrame(HLTAS::Frame& f);
+ 	void ResetButtons();

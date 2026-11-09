@@ -1,0 +1,26 @@
+ULTIMATEHL 3.7 - BIG AG HUD DISTRIBUTION
+
+Extract the entire folder to a writable location and run START HERE.bat.
+Do not move UltimateHL.exe away from its Half-Life, BXT and HUD-presets folders.
+Close other Half-Life copies first; the normal ownership/Steam setup is required.
+
+Defaults: Big AG HUD, 1x HUD size, 2x-per-axis scene, Tankfird BXT,
+full-resolution borderless/DXGI capture path, load FPS floor 0.
+
+Play - windowed control.bat provides an ordinary 1280x800 window, with BXT.
+Use "UltimateHL settings..." in the game menu for artwork, HUD size and quality.
+Artwork changes require a restart. HUD size and most other settings apply live.
+Original 640 and Compact 320 artwork are still available in the settings list.
+
+ABOUT AND FEATURES.txt explains exactly what was built, how it connects to
+Half-Life, what was added, the useful commands, and the remaining limitations.
+BXT/Tankfird-features.txt has the fork's own notes; BXT/LICENSE is its license.
+SHA256SUMS.txt lists the packaged file hashes; it is not a digital signature.
+
+Clean controls: WASD, E use, R reload, Space jump, Ctrl duck, F6 quicksave,
+F7 quickload, console on ` / ~, sensitivity 3. No personal binds/saves are shipped.
+Your previous playtest folders/configs/saves have not been altered.
+
+Experimental local/offline build. Not run-certified; do not use on VAC or stack
+RInput. This bundle contains licensed Half-Life files. Cleaning/packing it does
+not grant public redistribution rights; see ABOUT AND FEATURES.txt before sharing.
